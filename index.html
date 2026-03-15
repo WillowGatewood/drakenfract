@@ -41,16 +41,18 @@ background:#1c1c1c;
 border:none;
 border-radius:10px;
 cursor:pointer;
-transition:.15s;
+transition:.12s;
 }
 
 .pad.active{
-background:#555;
+background:#666;
 }
+
+/* subtle grain flash */
 
 .pad.flash{
 box-shadow:0 0 12px rgba(255,255,255,0.35);
-transform:scale(1.02);
+transform:scale(1.03);
 }
 
 </style>
@@ -73,46 +75,49 @@ transform:scale(1.02);
 
 <script>
 
-/* AUDIO */
+/* AUDIO CONTEXT */
 
-let audioCtx = new (window.AudioContext || window.webkitAudioContext)({latencyHint:"interactive"})
+let audioCtx = new (window.AudioContext || window.webkitAudioContext)()
 
 document.body.addEventListener("click", async () => {
 await audioCtx.resume()
 },{once:true})
 
-/* TEMPO */
-
-let bpm = 72
-let beat = 60 / bpm
-
-/* SPACE */
+/* SHARED DELAY SPACE */
 
 let masterGain = audioCtx.createGain()
 masterGain.gain.value = 0.9
 
 let delay = audioCtx.createDelay()
-delay.delayTime.value = 0.3
+delay.delayTime.value = 0.28
 
 let feedback = audioCtx.createGain()
 feedback.gain.value = 0.22
 
-delay.connect(feedback)
+let filter = audioCtx.createBiquadFilter()
+filter.type = "lowpass"
+filter.frequency.value = 3500
+
+delay.connect(filter)
+filter.connect(feedback)
 feedback.connect(delay)
 
 delay.connect(masterGain)
 masterGain.connect(audioCtx.destination)
 
-/* SAMPLES */
+/* SAMPLE LOADING */
 
-let buffers={}
-let samplesReady=false
+let buffers = {}
+let samplesReady = false
 
 async function loadSample(name,file){
 
-let r = await fetch(file)
-let b = await r.arrayBuffer()
-buffers[name] = await audioCtx.decodeAudioData(b)
+let response = await fetch(file)
+let arrayBuffer = await response.arrayBuffer()
+
+buffers[name] = await audioCtx.decodeAudioData(arrayBuffer)
+
+console.log(name + " loaded")
 
 }
 
@@ -122,147 +127,150 @@ loadSample("machine","machine.mp3"),
 loadSample("voice","voice.mp3")
 ]).then(()=>{
 
-samplesReady=true
-console.log("samples ready")
+samplesReady = true
+console.log("all samples ready")
 
 })
 
-/* DRIFT FIELD */
+/* DRIFT STATE */
 
-let drift={
-metal:Math.random(),
-machine:Math.random(),
-voice:Math.random()
+let drift = {
+metal: Math.random(),
+machine: Math.random(),
+voice: Math.random()
 }
 
-setInterval(()=>{
+function updateDrift(){
 
-drift.metal += (Math.random()-0.5)*0.002
-drift.machine += (Math.random()-0.5)*0.002
-drift.voice += (Math.random()-0.5)*0.002
+drift.metal += 0.002 * (Math.random()-0.5)
+drift.machine += 0.002 * (Math.random()-0.5)
+drift.voice += 0.002 * (Math.random()-0.5)
 
 for(let k in drift){
-drift[k]=Math.max(0,Math.min(1,drift[k]))
+drift[k] = Math.max(0, Math.min(1, drift[k]))
 }
 
-},400)
-
-/* PITCH FIELD */
-
-const scale=[0.75,0.9,1,1.2,1.33]
-
-function quantPitch(){
-return scale[Math.floor(Math.random()*scale.length)]
 }
 
-/* GRAIN ENGINE */
+setInterval(updateDrift,300)
 
-function playGrain(sample,pitch=1,time=null){
+/* VISUAL FLASH */
 
-let buffer=buffers[sample]
+function flashPad(name){
+
+let pad = document.querySelector(`[data-pad="${name}"]`)
+
+pad.classList.add("flash")
+
+setTimeout(()=>{
+pad.classList.remove("flash")
+},90)
+
+}
+
+/* GRANULAR ENGINE */
+
+function playGrain(sampleName,pitch=1){
+
+let buffer = buffers[sampleName]
 if(!buffer) return
 
-let now=time || audioCtx.currentTime
+let now = audioCtx.currentTime
 
 let src = audioCtx.createBufferSource()
+src.buffer = buffer
+
 let gain = audioCtx.createGain()
 
-let grainSize = 0.09 + Math.random()*0.05
-let start = drift[sample] * buffer.duration
+let grainSize = 0.06 + Math.random()*0.06
+let start = drift[sampleName] * buffer.duration
 
-src.buffer = buffer
-src.playbackRate.value = pitch * quantPitch()
-
-src.connect(gain)
-gain.connect(delay)
+src.playbackRate.value = pitch + (Math.random()-0.5)*0.3
 
 gain.gain.setValueAtTime(0,now)
 gain.gain.linearRampToValueAtTime(0.45,now+0.01)
 gain.gain.linearRampToValueAtTime(0,now+grainSize)
+
+src.connect(gain)
+gain.connect(delay)
 
 src.start(now,start,grainSize)
 src.stop(now+grainSize)
 
 }
 
-/* VISUAL FEEDBACK */
+/* GRAIN EMITTERS */
 
-function flashPad(name){
+let emitters = {}
 
-let pad=document.querySelector(`[data-pad="${name}"]`)
+function startEmitter(name){
 
-pad.classList.add("flash")
+emitters[name] = setInterval(()=>{
 
-setTimeout(()=>{
-pad.classList.remove("flash")
-},120)
+if(name==="pad1"){
+playGrain("metal",0.8)
+flashPad(name)
+}
+
+if(name==="pad2"){
+playGrain("machine",1.1)
+flashPad(name)
+}
+
+if(name==="pad3"){
+playGrain("voice",0.7)
+flashPad(name)
+}
+
+if(name==="pad4"){
+playGrain("voice",-1.2)
+flashPad(name)
+}
+
+},160 + Math.random()*120)
 
 }
 
-/* PAD STATES */
-
-let padState={
-pad1:false,
-pad2:false,
-pad3:false,
-pad4:false
+function stopEmitter(name){
+clearInterval(emitters[name])
 }
-
-/* RHYTHM ENGINE */
-
-let step=0
-
-setInterval(()=>{
-
-if(!samplesReady) return
-
-let now=audioCtx.currentTime
-
-if(padState.pad1){
-playGrain("metal",0.8,now)
-if(Math.random()<0.3) flashPad("pad1")
-}
-
-if(padState.pad2 && step%2===0){
-playGrain("machine",1,now)
-if(Math.random()<0.3) flashPad("pad2")
-}
-
-if(padState.pad3 && step%3===0){
-playGrain("voice",0.8,now)
-if(Math.random()<0.3) flashPad("pad3")
-}
-
-if(padState.pad4 && step%4===0){
-playGrain("voice",-1,now)
-if(Math.random()<0.3) flashPad("pad4")
-}
-
-step++
-
-},beat*1000)
 
 /* PAD INTERACTION */
 
 document.querySelectorAll(".pad").forEach(pad=>{
 
-let name=pad.dataset.pad
+let name = pad.dataset.pad
+let active=false
+
+function toggle(){
+
+if(!samplesReady){
+console.log("samples still loading")
+return
+}
+
+if(!active){
+
+startEmitter(name)
+pad.classList.add("active")
+active=true
+
+}else{
+
+stopEmitter(name)
+pad.classList.remove("active")
+active=false
+
+}
+
+}
 
 pad.addEventListener("click",toggle)
+
 pad.addEventListener("touchstart",(e)=>{
 e.preventDefault()
 toggle()
 })
-
-function toggle(){
-
-if(!samplesReady) return
-
-padState[name]=!padState[name]
-
-pad.classList.toggle("active")
-
-}
 
 })
 
