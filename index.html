@@ -49,7 +49,7 @@ background:#666;
 }
 
 .pad.flash{
-box-shadow:0 0 14px rgba(255,255,255,0.4);
+box-shadow:0 0 14px rgba(255,255,255,0.35);
 transform:scale(1.03);
 }
 
@@ -78,15 +78,20 @@ transform:scale(1.03);
 let audioCtx = new (window.AudioContext || window.webkitAudioContext)()
 
 document.body.addEventListener("click", async () => {
+
 await audioCtx.resume()
+
+nextStepTime = audioCtx.currentTime
+scheduler()
+
 },{once:true})
 
-/* GLOBAL TEMPO FIELD */
+/* TEMPO FIELD */
 
 let bpm = 72
-let beatInterval = (60 / bpm) * 1000
+let beat = 60 / bpm
 
-/* SHARED SPACE */
+/* SHARED DELAY SPACE */
 
 let masterGain = audioCtx.createGain()
 masterGain.gain.value = 0.9
@@ -154,7 +159,7 @@ drift.voice += 0.002*(Math.random()-0.5)
 }
 
 for(let k in drift){
-drift[k]=Math.max(0,Math.min(1,drift[k]))
+drift[k] = Math.max(0,Math.min(1,drift[k]))
 }
 
 }
@@ -164,9 +169,7 @@ setInterval(updateDrift,300)
 /* OCCASIONAL FREEZE */
 
 setInterval(()=>{
-
 freeze = Math.random() < 0.3
-
 },6000)
 
 /* VISUAL FLASH */
@@ -185,22 +188,22 @@ pad.classList.remove("flash")
 
 /* GRANULAR ENGINE */
 
-function playGrain(sampleName,pitch=1){
+function playGrain(sampleName,pitch=1,time=null){
 
-let buffer=buffers[sampleName]
+let buffer = buffers[sampleName]
 if(!buffer) return
 
-let now=audioCtx.currentTime
+let now = time || audioCtx.currentTime
 
-let src=audioCtx.createBufferSource()
-src.buffer=buffer
+let src = audioCtx.createBufferSource()
+src.buffer = buffer
 
-let gain=audioCtx.createGain()
+let gain = audioCtx.createGain()
 
-let grainSize=0.08 + Math.random()*0.04
-let start=drift[sampleName]*buffer.duration
+let grainSize = 0.08 + Math.random()*0.04
+let start = drift[sampleName] * buffer.duration
 
-src.playbackRate.value=pitch + (Math.random()-0.5)*0.15
+src.playbackRate.value = pitch + (Math.random()-0.5)*0.15
 
 gain.gain.setValueAtTime(0,now)
 gain.gain.linearRampToValueAtTime(0.5,now+0.01)
@@ -214,75 +217,86 @@ src.stop(now+grainSize)
 
 }
 
-/* EMITTERS */
+/* PAD STATES */
 
-let emitters={}
-
-function startEmitter(name){
-
-emitters[name]=setInterval(()=>{
-
-if(name==="pad1"){
-playGrain("metal",0.8)
-flashPad(name)
+let padState = {
+pad1:false,
+pad2:false,
+pad3:false,
+pad4:false
 }
 
-if(name==="pad2"){
-playGrain("machine",1.0)
-flashPad(name)
-}
+/* AUDIO SCHEDULER */
 
-if(name==="pad3"){
-playGrain("voice",0.7)
-flashPad(name)
-}
+let nextStepTime = 0
+let schedulerLookahead = 0.1
 
-if(name==="pad4"){
-playGrain("voice",-1.0)
-flashPad(name)
-}
+function scheduler(){
 
-},beatInterval)
+while(nextStepTime < audioCtx.currentTime + schedulerLookahead){
+
+triggerStep(nextStepTime)
+
+nextStepTime += beat
 
 }
 
-function stopEmitter(name){
-clearInterval(emitters[name])
+setTimeout(scheduler,25)
+
+}
+
+/* RHYTHMIC PATTERNS */
+
+let step = 0
+
+function triggerStep(time){
+
+if(!samplesReady) return
+
+/* polyrhythmic divisions */
+
+if(padState.pad1 && step % 1 === 0){
+playGrain("metal",0.8,time)
+flashPad("pad1")
+}
+
+if(padState.pad2 && step % 2 === 0){
+playGrain("machine",1.0,time)
+flashPad("pad2")
+}
+
+if(padState.pad3 && step % 3 === 0){
+playGrain("voice",0.7,time)
+flashPad("pad3")
+}
+
+if(padState.pad4 && step % 4 === 0){
+playGrain("voice",-1.0,time)
+flashPad("pad4")
+}
+
+step++
+
 }
 
 /* PAD INTERACTION */
 
 document.querySelectorAll(".pad").forEach(pad=>{
 
-let name=pad.dataset.pad
-let active=false
+let name = pad.dataset.pad
+
+pad.addEventListener("click",toggle)
+pad.addEventListener("touchstart",(e)=>{e.preventDefault();toggle()})
 
 function toggle(){
 
 if(!samplesReady) return
 
-if(!active){
+padState[name] = !padState[name]
 
-startEmitter(name)
-pad.classList.add("active")
-active=true
-
-}else{
-
-stopEmitter(name)
-pad.classList.remove("active")
-active=false
+pad.classList.toggle("active")
 
 }
-
-}
-
-pad.addEventListener("click",toggle)
-
-pad.addEventListener("touchstart",(e)=>{
-e.preventDefault()
-toggle()
-})
 
 })
 
